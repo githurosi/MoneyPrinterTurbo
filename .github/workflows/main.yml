@@ -1,13 +1,13 @@
-name: 同步资产日志到主页并保存README副本
+name: 同步资产日志到主页（v2rayNG版）
 on:
   push:
     branches: [ main ]
   schedule:
-    - cron: "0 1 * * *" # UTC+8凌晨1点
+    - cron: "0 1 * * *" # 每天凌晨1点运行（UTC+8）
   workflow_dispatch:
     inputs:
       force_update:
-        description: '是否强制更新'
+        description: '是否强制更新（忽略版本检查）'
         required: false
         default: 'false'
 
@@ -15,57 +15,71 @@ permissions:
   contents: write
 
 jobs:
-  sync-readme:
+  sync:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: 检出当前仓库
+      - name: 检出仓库
         uses: actions/checkout@v4
         with:
           fetch-depth: 1 # 浅克隆加速
 
-      - name: 获取目标仓库README内容
-        id: fetch-readme
+      - name: 安装依赖
         run: |
-          set -euo pipefail
-          TARGET_REPO="harry0703/MoneyPrinterTurbo"
-          README_URL="https://raw.githubusercontent.com/${TARGET_REPO}/main/README.md"
-          curl -s "$README_URL" > temp_readme.md
-          echo "已将目标仓库README保存为temp_readme.md到仓库根目录"
+          sudo apt-get update -y
+          sudo apt-get install -y wget jq translate-shell unzip
 
-      - name: 提取资产日志并同步到主页
+      - name: 下载目标仓库README到根目录
+        run: |
+          TARGET_REPO="2dust/v2rayNG"
+          curl -s https://raw.githubusercontent.com/${TARGET_REPO}/main/README.md > temp_readme.md
+          echo "已保存目标仓库README到temp_readme.md"
+
+      - name: 处理资产与日志（无资产则跳过下载）
+        id: process-assets-log
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          REPO_OWNER="2dust"
+          REPO_NAME="v2rayNG"
+          response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
+          TAG_NAME=$(echo "$response" | jq -r '.tag_name')
+          ASSETS=($(echo "$response" | jq -r '.assets[].name'))
+          RELEASE_NOTES=$(echo "$response" | jq -r '.body')
+
+          # 仅在有资产时下载
+          if [ ${#ASSETS[@]} -gt 0 ]; then
+            for asset in "${ASSETS[@]}"; do
+              DOWNLOAD_URL=$(echo "$response" | jq -r ".assets[] | select(.name == \"$asset\") | .browser_download_url")
+              wget -q --show-progress "$DOWNLOAD_URL" -O "$asset"
+              echo "已下载资产: $asset"
+            done
+          else
+            echo "⚠️ 目标版本无资产，跳过下载"
+          fi
+
+          # 处理日志更新
           FORCE_UPDATE=${{ github.event.inputs.force_update || 'false' }}
           LOCAL_VERSION=$(cat version.txt 2>/dev/null || echo "")
-          # 尝试提取版本号（可根据实际调整正则）
-          TARGET_TAG=$(grep -oP '(?<=版本 )\d+\.\d+\.\d+' temp_readme.md)
-          if [ -z "$TARGET_TAG" ]; then
-            TARGET_TAG=$(curl -s https://api.github.com/repos/harry0703/MoneyPrinterTurbo/releases/latest | jq -r '.tag_name')
+
+          if [ "$LOCAL_VERSION" = "$TAG_NAME" ] && [ "$FORCE_UPDATE" != "true" ]; then
+            echo "✅ 日志已是最新版本（$TAG_NAME）"
+            exit 0
           fi
 
-          # 提取资产日志（假设标题为“最新资产更新日志”，根据实际调整）
-          ASSET_LOG=$(awk '/最新资产更新日志/,/^## /{if (/最新资产更新日志/) {p=1; next} if (/^## / && NR>1) {p=0} p}' temp_readme.md)
-          if [ -n "$ASSET_LOG" ]; then
-            # 仅在版本变更或强制更新时写入
-            if [ "$LOCAL_VERSION" != "$TARGET_TAG" ] || [ "$FORCE_UPDATE" = "true" ]; then
-              echo "$TARGET_TAG" > version.txt
-              # 清空本地README原有资产日志部分（以“最新资产更新日志”为标记）
-              sed -i '/最新资产更新日志/,+1d' README.md
-              echo -e "## 最新资产更新日志\n$ASSET_LOG" >> README.md
-            else
-              echo "✅ 日志已同步至最新版本（$TARGET_TAG）"
-            fi
-          else
-            echo "未提取到资产日志内容"
-          fi
+          TRANSLATED_NOTES=$(echo "$RELEASE_NOTES" | trans -b -e google -t zh-CN || echo "$RELEASE_NOTES")
+          echo "$TAG_NAME" > version.txt
+          echo -e "## 📅 资产更新日志\n### $TAG_NAME\n$TRANSLATED_NOTES" >> README.md
 
       - name: 提交变更
         if: always()
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: 🔄 同步资产日志到主页并保存README副本
+          commit_message: 🔄 同步资产日志 & 保存README副本
           files: |
-            README.md
+            temp_readme.md  # 目标仓库README副本
+            *.apk           # 资产文件（可选）
+            *.zip
             version.txt
-            temp_readme.md
+            README.md
