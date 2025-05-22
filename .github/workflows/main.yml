@@ -31,6 +31,7 @@ jobs:
           TARGET_REPO="harry0703/MoneyPrinterTurbo"
           README_URL="https://raw.githubusercontent.com/${TARGET_REPO}/main/README.md"
           curl -s "$README_URL" > temp_readme.md
+          echo "成功获取目标仓库README内容，保存为temp_readme.md"
 
       - name: 提取并重组日志内容
         run: |
@@ -38,16 +39,21 @@ jobs:
           FORCE_UPDATE=${{ github.event.inputs.force_update || 'false' }}
           LOCAL_VERSION=$(cat version.txt 2>/dev/null || echo "")
           # 尝试从temp_readme.md提取版本号，若未找到则从GitHub API获取（假设仓库有Release版本）
-          TARGET_TAG=$(grep -oP '(?<=版本 )\d+\.\d+\.\d+' temp_readme.md || \
-                       $(curl -s https://api.github.com/repos/harry0703/MoneyPrinterTurbo/releases/latest | jq -r '.tag_name'))
+          TARGET_TAG=$(grep -oP '(?<=版本 )\d+\.\d+\.\d+' temp_readme.md)
+          if [ -z "$TARGET_TAG" ]; then
+            TARGET_TAG=$(curl -s https://api.github.com/repos/harry0703/MoneyPrinterTurbo/releases/latest | jq -r '.tag_name')
+          fi
+          echo "提取到的版本号：$TARGET_TAG"
 
           # 提取最新资产更新日志（根据你截图标题调整）
           ASSET_LOG=$(awk '/最新资产更新日志/,/^## /{if (/最新资产更新日志/) {p=1; next} if (/^## / && NR>1) {p=0} p}' temp_readme.md)
+          echo "提取到的资产日志内容：$ASSET_LOG"
           # 提取项目主页日志（排除重复标题干扰，只取一个完整段落，这里假设后续还有其他标题干扰）
           HOME_LOG=$(awk '
             /项目主页日志/{flag=1; start=NR}
             /^## / && flag && NR > start {flag=0}
             flag' temp_readme.md)
+          echo "提取到的项目主页日志内容：$HOME_LOG"
 
           # 组合日志顺序：资产日志 -> 主页日志
           COMBINED_LOG=$(echo -e "$ASSET_LOG\n$HOME_LOG")
