@@ -1,9 +1,9 @@
-name: 同步多源日志（资产日志+目标主页日志）
+name: 同步多源日志（资产日志 + 目标主页日志）
 on:
   push:
     branches: [ main ]
   schedule:
-    - cron: "0 1 * * *" # 每天凌晨1点运行（UTC+8）
+    - cron: "0 1 * * *" # 每天凌晨1点运行（UTC + 8）
   workflow_dispatch:
     inputs:
       force_update:
@@ -16,26 +16,25 @@ permissions:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu - latest
+    timeout - minutes: 10
     steps:
       - name: 检出仓库
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1 # 浅克隆加速
+          fetch - depth: 1 # 浅克隆加速
 
       - name: 获取目标仓库主页日志（非Release日志）
-        id: fetch-home-log
+        id: fetch - home - log
         run: |
-          # 替换为目标仓库主页日志的实际路径（如README.md中的特定段落）
-          # 示例：提取README.md中"更新日志"标题下的内容
-          HOME_LOG=$(curl -s https://raw.githubusercontent.com/harry0703/MoneyPrinterTurbo/main/README.md | grep -A 20 "更新日志" | tail -n +2) # 需根据实际结构调整
+          # 使用正则表达式提取目标仓库主页日志
+          HOME_LOG=$(curl -s https://raw.githubusercontent.com/harry0703/MoneyPrinterTurbo/main/README.md | grep -Pzo '(?s)更新日志.*?(\d+\.\d+\.\d+版.*?)(?=更新日志|\Z)' | tail -n +2)
           echo "HOME_LOG=$HOME_LOG" >> $GITHUB_OUTPUT
 
       - name: 同步资产更新日志（来自Releases）
-        id: update-release-log
+        id: update - release - log
         run: |
-          set -euo pipefail
+          set - euo pipefail
           FORCE_UPDATE=${{ github.event.inputs.force_update || 'false' }}
           LOCAL_VERSION=$(cat version.txt 2>/dev/null || echo "")
           REPO_OWNER="harry0703"
@@ -62,10 +61,10 @@ jobs:
 
       - name: 合并日志并写入README
         run: |
-          set -euo pipefail
+          set - euo pipefail
           # 获取各类日志内容
-          RELEASE_CONTENT=${{ steps.update-release-log.outputs.RELEASE_CONTENT }}
-          HOME_LOG=${{ steps.fetch-home-log.outputs.HOME_LOG }}
+          RELEASE_CONTENT=${{ steps.update - release - log.outputs.RELEASE_CONTENT }}
+          HOME_LOG=${{ steps.fetch - home - log.outputs.HOME_LOG }}
 
           # 构建最终日志（资产日志在前，目标主页日志在后）
           FINAL_LOG="${RELEASE_CONTENT}## 🔰 项目主页日志\n${HOME_LOG}\n\n"
@@ -81,9 +80,9 @@ jobs:
 
       - name: 提交更新
         if: always()
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git - auto - commit - action@v5
         with:
-          commit_message: 🔄 同步最新日志（资产日志+主页日志）
+          commit_message: 🔄 同步最新日志（资产日志 + 主页日志）
           files: |
             version.txt
             README.md
