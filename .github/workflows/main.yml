@@ -1,4 +1,4 @@
-name: 同步README日志（带顺序调整）
+name: 同步README日志（优化去重）
 on:
   push:
     branches: [ main ]
@@ -31,82 +31,31 @@ jobs:
           TARGET_REPO="harry0703/MoneyPrinterTurbo"
           README_URL="https://raw.githubusercontent.com/${TARGET_REPO}/main/README.md"
           curl -s "$README_URL" > temp_readme.md
-          echo "成功获取目标仓库README内容，保存为temp_readme.md"
-          # 输出temp_readme.md前几行内容用于初步查看
-          head -n 5 temp_readme.md 
 
-      - name: 提取并重组日志内容
+      - name: 处理并重组日志内容
         run: |
           set -euo pipefail
+          # 去除重复的“项目主页日志”标题及多余内容
+          sed -i '/项目主页日志/{n;/项目主页日志/d}' temp_readme.md
+          sed -i '/MoneyPrinterTurbo/d' temp_readme.md
+
+          # 提取需要的日志内容部分（假设从“更新日志”开始到文件末尾是目标日志）
+          TARGET_LOG=$(awk '/更新日志/{p=1} p' temp_readme.md)
+
           FORCE_UPDATE=${{ github.event.inputs.force_update || 'false' }}
           LOCAL_VERSION=$(cat version.txt 2>/dev/null || echo "")
-          # 尝试从temp_readme.md提取版本号，若未找到则从GitHub API获取（假设仓库有Release版本）
-          TARGET_TAG=$(grep -oP '(?<=版本 )\d+\.\d+\.\d+' temp_readme.md)
+          # 提取版本号（假设版本号在“更新日志”附近，可根据实际调整）
+          TARGET_TAG=$(grep -oP '(?<=更新日志 )v\d+\.\d+\.\d+' temp_readme.md)
           if [ -z "$TARGET_TAG" ]; then
             TARGET_TAG=$(curl -s https://api.github.com/repos/harry0703/MoneyPrinterTurbo/releases/latest | jq -r '.tag_name')
           fi
-          echo "提取到的版本号：$TARGET_TAG"
-
-          # 提取最新资产更新日志（根据你截图标题调整）
-          echo "开始提取资产日志..."
-          ASSET_LOG=$(awk '
-            BEGIN {
-              found = 0
-            }
-            /最新资产更新日志/{
-              found = 1
-              print "进入资产日志匹配"
-              next
-            }
-            found && /^## /{
-              found = 0
-            }
-            found {
-              print
-            }
-          ' temp_readme.md)
-          echo "提取到的资产日志内容：$ASSET_LOG"
-
-          # 提取项目主页日志（排除重复标题干扰，只取一个完整段落，这里假设后续还有其他标题干扰）
-          echo "开始提取项目主页日志..."
-          HOME_LOG=$(awk '
-            BEGIN {
-              flag = 0
-              start = 0
-            }
-            /项目主页日志/{
-              flag = 1
-              start = NR
-              print "进入项目主页日志匹配"
-              next
-            }
-            flag && /^## / && NR > start {
-              flag = 0
-            }
-            flag {
-              print
-            }
-          ' temp_readme.md)
-          echo "提取到的项目主页日志内容：$HOME_LOG"
-
-          # 组合日志顺序：资产日志 -> 主页日志
-          COMBINED_LOG=$(echo -e "$ASSET_LOG\n$HOME_LOG")
 
           # 仅在版本变更或强制更新时写入
           if [ "$LOCAL_VERSION" != "$TARGET_TAG" ] || [ "$FORCE_UPDATE" = "true" ]; then
             echo "$TARGET_TAG" > version.txt
-            # 先不直接修改文件，输出查看sed操作结果
-            sed '/最新资产更新日志/,+1d' README.md > temp_sed.md
-            echo "sed操作后模拟结果（未实际写入）："
-            cat temp_sed.md
-            # 在README顶部插入新日志（保留原有非日志内容）
-            if [ -f "README.md" ]; then
-              mv README.md old_README.md
-              echo -e "## 最新资产更新日志\n$ASSET_LOG\n## 项目主页日志\n$HOME_LOG\n\n" | cat - old_README.md > README.md
-              rm old_README.md
-            else
-              echo -e "## 最新资产更新日志\n$ASSET_LOG\n## 项目主页日志\n$HOME_LOG" > README.md
-            fi
+            # 清空本地README原有相关日志部分（这里假设以“更新日志”为标记开始清空）
+            sed -i '/更新日志/,+1d' README.md
+            echo -e "$TARGET_LOG" >> README.md
           else
             echo "✅ 日志已同步至最新版本（$TARGET_TAG）"
           fi
@@ -115,7 +64,7 @@ jobs:
         if: always()
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: 🔄 同步README日志（资产优先显示）
+          commit_message: 🔄 同步README日志（优化去重）
           files: |
             README.md
             version.txt
