@@ -1,4 +1,4 @@
-name: 同步更新日志（MoneyPrinterTurbo版）
+name: 同步多源日志（资产日志+目标主页日志）
 on:
   push:
     branches: [ main ]
@@ -24,39 +24,66 @@ jobs:
         with:
           fetch-depth: 1 # 浅克隆加速
 
-      - name: 同步更新日志
-        id: update-log
+      - name: 获取目标仓库主页日志（非Release日志）
+        id: fetch-home-log
+        run: |
+          # 替换为目标仓库主页日志的实际路径（如README.md中的特定段落）
+          # 示例：提取README.md中"更新日志"标题下的内容
+          HOME_LOG=$(curl -s https://raw.githubusercontent.com/harry0703/MoneyPrinterTurbo/main/README.md | grep -A 20 "更新日志" | tail -n +2) # 需根据实际结构调整
+          echo "HOME_LOG=$HOME_LOG" >> $GITHUB_OUTPUT
+
+      - name: 同步资产更新日志（来自Releases）
+        id: update-release-log
         run: |
           set -euo pipefail
           FORCE_UPDATE=${{ github.event.inputs.force_update || 'false' }}
           LOCAL_VERSION=$(cat version.txt 2>/dev/null || echo "")
-          REPO_OWNER="harry0703"      # 目标仓库所有者
-          REPO_NAME="MoneyPrinterTurbo" # 目标仓库名
+          REPO_OWNER="harry0703"
+          REPO_NAME="MoneyPrinterTurbo"
 
-          # 获取最新版本信息（通过 releases/latest 接口）
+          # 获取Release最新日志
           response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           TAG_NAME=$(echo "$response" | jq -r '.tag_name')
-          RELEASE_NOTES=$(echo "$response" | jq -r '.body')
-          ASSETS=$(echo "$response" | jq -r '.assets[].name' || echo "无资产文件") # 处理无资产情况
+          RELEASE_NOTES=$(echo "$response" | jq -r '.body' || "无更新日志")
+          ASSETS=$(echo "$response" | jq -r '.assets[].name' || "无资产文件")
 
-          # 版本对比逻辑
+          # 版本对比
           if [ "$LOCAL_VERSION" = "$TAG_NAME" ] && [ "$FORCE_UPDATE" != "true" ]; then
             echo "✅ 已是最新版本（$TAG_NAME），无需更新"
             exit 0
           fi
 
-          # 翻译日志（可选，保留英文可删除）
-          TRANSLATED_NOTES=$(echo "$RELEASE_NOTES" | trans -b -e google -t zh-CN || echo "$RELEASE_NOTES")
+          # 构建资产日志内容（优先级最高，显示在最上方）
+          RELEASE_CONTENT="## 🚀 最新资产更新日志\n### ${TAG_NAME}\n资产：${ASSETS}\n${RELEASE_NOTES}\n\n"
 
-          # 更新版本文件和 README（追加日志到主页顶部）
+          # 保存新版本号
           echo "$TAG_NAME" > version.txt
-          echo -e "## 📅 更新日志\n### $TAG_NAME\n资产：$ASSETS\n$TRANSLATED_NOTES\n" | cat - README.md > temp.md && mv temp.md README.md
+          echo "RELEASE_CONTENT=$RELEASE_CONTENT" >> $GITHUB_OUTPUT
+
+      - name: 合并日志并写入README
+        run: |
+          set -euo pipefail
+          # 获取各类日志内容
+          RELEASE_CONTENT=${{ steps.update-release-log.outputs.RELEASE_CONTENT }}
+          HOME_LOG=${{ steps.fetch-home-log.outputs.HOME_LOG }}
+
+          # 构建最终日志（资产日志在前，目标主页日志在后）
+          FINAL_LOG="${RELEASE_CONTENT}## 🔰 项目主页日志\n${HOME_LOG}\n\n"
+
+          # 保留原有README内容，在顶部插入新日志
+          if [ -f "README.md" ]; then
+            mv README.md old_README.md
+            echo -e "${FINAL_LOG}" | cat - old_README.md > README.md
+            rm old_README.md
+          else
+            echo -e "${FINAL_LOG}" > README.md
+          fi
 
       - name: 提交更新
         if: always()
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: 🔄 同步 ${TAG_NAME} 更新日志
+          commit_message: 🔄 同步最新日志（资产日志+主页日志）
           files: |
-            version.txt   # 版本文件
-            README.md     # 主页日志
+            version.txt
+            README.md
