@@ -1,0 +1,73 @@
+name: 同步资产日志到主页（MoneyPrinterTurbo版）
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: "0 1 * * *" # UTC+8凌晨1点
+  workflow_dispatch:
+    inputs:
+      force_update:
+        description: '是否强制更新（忽略版本检查）'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1 # 浅克隆加速
+
+      - name: 下载目标仓库README到根目录
+        run: |
+          TARGET_REPO="harry0703/MoneyPrinterTurbo"
+          curl -s https://raw.githubusercontent.com/${TARGET_REPO}/main/README.md > temp_readme.md
+          echo "已保存原始README到temp_readme.md"
+
+      - name: 安装依赖（如需处理日志翻译）
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq translate-shell # 保留翻译工具（可选）
+
+      - name: 处理资产与日志（无资产则仅更新日志）
+        id: process-log
+        run: |
+          set -euo pipefail
+          REPO_OWNER="harry0703"
+          REPO_NAME="MoneyPrinterTurbo"
+          response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
+          TAG_NAME=$(echo "$response" | jq -r '.tag_name')
+          RELEASE_NOTES=$(echo "$response" | jq -r '.body')
+          ASSETS=($(echo "$response" | jq -r '.assets[].name')) # 保留资产列表（即使无资产）
+
+          FORCE_UPDATE=${{ github.event.inputs.force_update || 'false' }}
+          LOCAL_VERSION=$(cat version.txt 2>/dev/null || echo "")
+
+          # 版本对比与日志更新
+          if [ "$LOCAL_VERSION" = "$TAG_NAME" ] && [ "$FORCE_UPDATE" != "true" ]; then
+            echo "✅ 已是最新版本（$TAG_NAME），无需更新"
+            exit 0
+          fi
+
+          # 翻译日志（可选，如需英文可删除）
+          TRANSLATED_NOTES=$(echo "$RELEASE_NOTES" | trans -b -e google -t zh-CN || echo "$RELEASE_NOTES")
+
+          # 写入版本文件和主页日志
+          echo "$TAG_NAME" > version.txt
+          echo -e "## 📅 资产更新日志\n### $TAG_NAME\n资产：${ASSETS[*]}\n$TRANSLATED_NOTES" >> README.md
+
+      - name: 提交变更
+        if: always()
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 🔄 同步资产日志 & 保存原始README
+          files: |
+            temp_readme.md  # 目标仓库原始README
+            version.txt     # 版本文件
+            README.md       # 主页日志
